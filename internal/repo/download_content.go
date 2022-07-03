@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"io"
 	"fmt"
+	"errors"
 )
 
 func (r * Repository) DownloadContent(branchOrSha1 string, path string) ([]byte, error) {
@@ -15,6 +16,11 @@ func (r * Repository) DownloadContent(branchOrSha1 string, path string) ([]byte,
 	rsp, err := http.Get(fullPath)
 	if err != nil {
 		return []byte(""), err
+	}
+
+	if rsp.StatusCode != 200 {
+		fmt.Println(fullPath)
+		return []byte(""), errors.New(rsp.Status)
 	}
 
 	o, err := io.ReadAll(rsp.Body)

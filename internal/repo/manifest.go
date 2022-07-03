@@ -3,9 +3,9 @@ package repo
 import (
 	"github.com/google/go-github/v45/github"
 	"context"
-	"fmt"
 	"encoding/json"
 	"strings"
+	"fmt"
 )
 
 func findManifest(tree * github.Tree) *github.TreeEntry {
@@ -33,17 +33,20 @@ func findSubtrees(tree * github.Tree) []*github.TreeEntry {
 }
 
 func judgeTreeByStructure(tree *github.Tree) int32 {
+	confidentW := int32(100)
+	veryUnconfidentW := int32(-100)
+
 	c := int32(0)
 	tcw := map[string]int32{
-		"assets": 100,
-		"js": 25,
-		"patches": 100,
-		"node_modules": -100,
+		"assets": confidentW,
+		"js": confidentW,
+		"patches": confidentW,
+		"node_modules": veryUnconfidentW,
 	}
 
 	bcw := map[string]int32{
-		"package.json": 50,
-		"package-lock.json": -100,
+		"package.json": confidentW,
+		"package-lock.json": veryUnconfidentW,
 	}
 
 	for _, treeEntry := range tree.Entries {
@@ -70,20 +73,26 @@ func judgeManifestByKeys(manifest string) int32 {
 	props := make(map[string]interface{})
 
 	if err := json.Unmarshal([]byte(manifest), &props); err != nil {
+		fmt.Println(manifest)
 		panic("judgeManifestByKeys:" + err.Error())
 	}
 
+
+	veryConfidentW := int32(10000)
+	confidentW := int32(100)
+	veryUnconfidentW := int32(-100)
+
 	kw := map[string]int32 {
-		"main": 100,
-		"version": 50,
-		"preload": 200,
-		"postload": 200,
-		"prestart": 200,
-		"displayName": 200,
-		"ccmodHumanName": 10000,
-		"ccmodDependencies": 10000,
-		"devDependencies": -200,
-		"scripts": -200,
+		"main": confidentW,
+		"version": confidentW,
+		"preload": veryConfidentW,
+		"postload": veryConfidentW,
+		"prestart": veryConfidentW,
+		"displayName": veryConfidentW,
+		"ccmodHumanName": veryConfidentW,
+		"ccmodDependencies": veryConfidentW,
+		"devDependencies":  veryUnconfidentW,
+		"scripts": veryUnconfidentW,
 	}
 
 	for key := range props {
@@ -94,24 +103,30 @@ func judgeManifestByKeys(manifest string) int32 {
 	return c
 }
 
-func (repo * Repository) GetManifestPath(branchOrSha1 string) string {
+func (repo * Repository) GetManifestPaths(sha1 string) (map[string]string, error) {
 
-	client := repo.Client
 
-	treeShas := []string{branchOrSha1}
+	if v, ok := repo.hashToManifestPaths[sha1]; ok {
+		return v, nil
+	}
+
+	// TODO: Change terrible variable names or break this function up smaller
+	subpathManifests := make(map[string]string)
+	client := repo.client
+	treeShas := []string{sha1}
 	treeShasIndex := 0
-
 	candidates := []string{}
 	confidences := []int32{}
 	tn := map[string]string{}
-	tn[branchOrSha1] = ""
+	tn[sha1] = ""
+
+
 	for ;treeShasIndex < len(treeShas);  {
 		treeSha := treeShas[treeShasIndex]
 		rt, _, err := client.Git.GetTree(context.TODO(), repo.Owner, repo.Name, treeSha, false)
 		
 		if err != nil {
-			fmt.Println(err)
-			return ""
+			return nil, err
 		}
 
 		if treeShasIndex == 0 {
@@ -135,12 +150,14 @@ func (repo * Repository) GetManifestPath(branchOrSha1 string) string {
 
 		fp := tn[treeSha] + name
 		if name == "ccmod.json"  {
-			return fp
+			subpathManifests[tn[treeSha]] = fp
+			continue
 		}
 
-		content, err := repo.DownloadContent(treeSha, fp)
+		content, err := repo.DownloadContent(sha1, fp)
 		if err != nil {
-			continue
+			return nil, err
+
 		}
 		confidence := judgeManifestByKeys(string(content))
 		confidence += judgeTreeByStructure(rt)
@@ -148,18 +165,21 @@ func (repo * Repository) GetManifestPath(branchOrSha1 string) string {
 		candidates = append(candidates, fp)
 	}
 
-	bestPath := ""
-	bestConfidence := int32(-1000000)
 	for i := 0; i < len(candidates); i++ {
 		can := candidates[i]
 		con := confidences[i]
-		if bestConfidence < con {
-			bestPath = can
-			bestConfidence = con
+		if con > 100 {
+			root := ""
+			if strings.Contains(can, "/") {
+				root = strings.Split(can, "/")[0]
+			}
+			subpathManifests[root] = can
 		}
 	}
 
-	return bestPath
+	repo.hashToManifestPaths[sha1] = subpathManifests
+
+	return subpathManifests, nil
 }
 
 

@@ -10,6 +10,7 @@ import (
 	"golang.org/x/oauth2"
 	"os"
 	repository "github.com/ac2pic/cmrc/internal/repo"
+	"encoding/json"
 )
 
 var ctx context.Context = context.TODO()
@@ -46,22 +47,58 @@ func fromGithubBlobToRaw(blobUrl string) string {
 
 
 
-func findRepoManifests(client * github.Client, repo * repository.Repository) map[string]string {
+func findRepoManifests(client * github.Client, repo * repository.Repository) map[string]map[string]string {
+
 	branches,_, err := client.Repositories.ListBranches(ctx, repo.Owner, repo.Name,nil)
 
 	if err != nil {
 		panic(err)
 	}
 
-	bmp := make(map[string]string)
+	bmp := make(map[string]map[string]string)
 
 	for _, branch := range branches {
 		bsha := branch.GetCommit().GetSHA()
 
-		mp := repo.GetManifestPath(bsha)
+
+		mp, err := repo.GetManifestPaths(bsha)
+		if err != nil {
+			fmt.Println(err)
+			continue
+		}
 		bmp[bsha] = mp
 	}
 	return bmp
+
+}
+
+type RepositoryTrackEntry struct {
+	Owner string `json:"owner"`
+	Name string `json:"name"`
+}
+
+func checkForTrackingUpdates(repoList map[string]*repository.Repository, client * github.Client) {
+	var track []*RepositoryTrackEntry
+
+	data, err := os.ReadFile("track.json")
+	if err != nil {
+		panic(err)
+	}
+
+	if err := json.Unmarshal(data, &track); err != nil {
+		panic(err)
+	}
+
+	// check for new entries
+
+	for _, val := range track {
+		kn := val.Owner + "-" + val.Name
+		if _, ok := repoList[kn]; !ok {
+			repo := repository.NewRepository(val.Owner, val.Name, client)
+			repoList[kn] = repo
+		}
+	}
+
 
 }
 
@@ -85,8 +122,12 @@ func main() {
 
 	client := github.NewClient(httpClient)
 
-	repo := &repository.Repository{Owner: "ac2pic",Name: "emilie", Client:client}
+	repoList := make(map[string]*repository.Repository)
 
-	fmt.Println(findRepoManifests(client, repo))
+	checkForTrackingUpdates(repoList, client)
+
+	for _, repo := range repoList {
+		fmt.Println(repo.Owner, repo.Name, findRepoManifests(client, repo))
+	}
 }
 
