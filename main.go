@@ -11,6 +11,8 @@ import (
 	"os"
 	repository "github.com/ac2pic/cmrc/internal/repo"
 	"encoding/json"
+	"io"
+	"bytes"
 )
 
 var ctx context.Context = context.TODO()
@@ -116,8 +118,6 @@ func main() {
 		Source: ts,
 	}
 
-
-
 	httpClient := &http.Client{Transport: authTransport}
 
 	client := github.NewClient(httpClient)
@@ -126,8 +126,30 @@ func main() {
 
 	checkForTrackingUpdates(repoList, client)
 
+	var out []*repository.SerializableRepository
+
+
 	for _, repo := range repoList {
 		fmt.Println(repo.Owner, repo.Name, findRepoManifests(client, repo))
+		out = append(out, repo.Emport())
 	}
+	b, e := json.Marshal(out)
+	if e != nil {
+		panic(e)
+	}
+
+	f, e := os.Create("out.json")
+	if e != nil {
+		panic(e)
+	}
+	defer f.Close()
+
+	reader := bytes.NewReader(b)
+
+	_, e = io.Copy(f, reader)
+	if e != nil {
+		panic(e)
+	}
+
 }
 

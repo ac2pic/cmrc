@@ -13,3 +13,9 @@ func NewRepository(owner string, name string, client * github.Client) *Repositor
 	return &Repository{Owner:owner, Name:name, client:client, hashToManifestPaths: make(map[string]map[string]string)}
 }
 
+type SerializableRepository struct {
+	Owner string `json:"owner"`
+	Name string `json:"repo"`
+	Commits map[string]map[string]string `json:"commits"`
+}
+
