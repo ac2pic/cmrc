@@ -156,10 +156,12 @@ func findBranchManifest(client * github.Client, owner string, repo string, branc
 
 			r, err := http.Get(fullUrl)
 			if err != nil {
+				confidence = append(confidence, -1000000)
 				continue
 			}
 			o, err := io.ReadAll(r.Body)
 			if err != nil {
+				confidence = append(confidence, -1000000)
 				continue
 			}
 			mw := judgeManifestByKeys(string(o))
