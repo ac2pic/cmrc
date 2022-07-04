@@ -11,8 +11,8 @@ import (
 	"os"
 	repository "github.com/ac2pic/cmrc/internal/repo"
 	"encoding/json"
-	"io"
 	"bytes"
+	"io"
 )
 
 var ctx context.Context = context.TODO()
@@ -49,28 +49,29 @@ func fromGithubBlobToRaw(blobUrl string) string {
 
 
 
-func findRepoManifests(client * github.Client, repo * repository.Repository) map[string]map[string]string {
+func updateRepoManifests(client * github.Client, repo * repository.Repository) bool {
 
 	branches,_, err := client.Repositories.ListBranches(ctx, repo.Owner, repo.Name,nil)
 
 	if err != nil {
-		panic(err)
+		return false
 	}
 
-	bmp := make(map[string]map[string]string)
+
+	updated := false
 
 	for _, branch := range branches {
 		bsha := branch.GetCommit().GetSHA()
 
-
-		mp, err := repo.GetManifestPaths(bsha)
+		u, err := repo.UpdateManifestPaths(bsha)
 		if err != nil {
-			fmt.Println(err)
 			continue
 		}
-		bmp[bsha] = mp
+		if u {
+			updated = true
+		}
 	}
-	return bmp
+	return updated
 
 }
 
@@ -79,7 +80,16 @@ type RepositoryTrackEntry struct {
 	Name string `json:"name"`
 }
 
-func checkForTrackingUpdates(repoList map[string]*repository.Repository, client * github.Client) {
+func findRepo(repoList []*repository.Repository, owner string, name string) *repository.Repository {
+	for _, repo := range repoList {
+		if repo.Owner == owner && repo.Name == name {
+			return repo
+		}
+	}
+	return nil
+}
+
+func checkForTrackingUpdates(repoList []*repository.Repository, client * github.Client) []*repository.Repository {
 	var track []*RepositoryTrackEntry
 
 	data, err := os.ReadFile("track.json")
@@ -94,14 +104,13 @@ func checkForTrackingUpdates(repoList map[string]*repository.Repository, client 
 	// check for new entries
 
 	for _, val := range track {
-		kn := val.Owner + "-" + val.Name
-		if _, ok := repoList[kn]; !ok {
+		repo := findRepo(repoList, val.Owner, val.Name)
+		if repo == nil {
 			repo := repository.NewRepository(val.Owner, val.Name, client)
-			repoList[kn] = repo
-		}
+			repoList = append(repoList, repo)
+		} 
 	}
-
-
+	return repoList
 }
 
 func main() {
@@ -122,33 +131,60 @@ func main() {
 
 	client := github.NewClient(httpClient)
 
-	repoList := make(map[string]*repository.Repository)
+	var repos []*repository.Repository
 
-	checkForTrackingUpdates(repoList, client)
+	fh,e := os.ReadFile("out.json")
 
-	var out []*repository.SerializableRepository
-
-
-	for _, repo := range repoList {
-		fmt.Println(repo.Owner, repo.Name, findRepoManifests(client, repo))
-		out = append(out, repo.Emport())
-	}
-	b, e := json.Marshal(out)
 	if e != nil {
 		panic(e)
 	}
 
-	f, e := os.Create("out.json")
-	if e != nil {
-		panic(e)
+
+	if err := json.Unmarshal(fh, &repos); err != nil {
+		panic(err)
 	}
-	defer f.Close()
 
-	reader := bytes.NewReader(b)
+	// Add missing client object
+	for _, repo := range repos  {
+		repo.AddClient(client)
+	}
 
-	_, e = io.Copy(f, reader)
-	if e != nil {
-		panic(e)
+
+
+	// Check if something updated what to track
+	repos = checkForTrackingUpdates(repos, client)
+
+
+	update := false
+
+	for _, repo := range repos {
+		updated := updateRepoManifests(client, repo)
+		if updated {
+			update = true
+		}
+	}
+
+	if update {
+		fmt.Println("Updating local copy...")
+		b, e := json.Marshal(repos)
+		if e != nil {
+			panic(e)
+		}
+	
+		f, e := os.Create("out.json")
+		if e != nil {
+			panic(e)
+		}
+		defer f.Close()
+	
+		reader := bytes.NewReader(b)
+	
+		_, e = io.Copy(f, reader)
+		if e != nil {
+			panic(e)
+		}
+	} else {
+		fmt.Println("Did not need to update local copy")
 	}
 
 }

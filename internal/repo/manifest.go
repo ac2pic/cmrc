@@ -103,11 +103,11 @@ func judgeManifestByKeys(manifest string) int32 {
 	return c
 }
 
-func (repo * Repository) GetManifestPaths(sha1 string) (map[string]string, error) {
+func (repo * Repository) UpdateManifestPaths(sha1 string) (bool, error) {
 
 
-	if v, ok := repo.hashToManifestPaths[sha1]; ok {
-		return v, nil
+	if _, ok := repo.Commits[sha1]; ok {
+		return false, nil
 	}
 
 	// TODO: Change terrible variable names or break this function up smaller
@@ -126,7 +126,7 @@ func (repo * Repository) GetManifestPaths(sha1 string) (map[string]string, error
 		rt, _, err := client.Git.GetTree(context.TODO(), repo.Owner, repo.Name, treeSha, false)
 		
 		if err != nil {
-			return nil, err
+			return false, err
 		}
 
 		if treeShasIndex == 0 {
@@ -156,7 +156,7 @@ func (repo * Repository) GetManifestPaths(sha1 string) (map[string]string, error
 
 		content, err := repo.DownloadContent(sha1, fp)
 		if err != nil {
-			return nil, err
+			return false, err
 
 		}
 		confidence := judgeManifestByKeys(string(content))
@@ -177,9 +177,9 @@ func (repo * Repository) GetManifestPaths(sha1 string) (map[string]string, error
 		}
 	}
 
-	repo.hashToManifestPaths[sha1] = subpathManifests
+	repo.Commits[sha1] = subpathManifests
 
-	return subpathManifests, nil
+	return true, nil
 }
 
 
