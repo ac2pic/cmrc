@@ -103,6 +103,7 @@ func judgeManifestByKeys(manifest string) int32 {
 	return c
 }
 
+// func (repo * Repository) UpdateVersionToCommitHash
 func (repo * Repository) UpdateManifestPaths(sha1 string) (bool, error) {
 
 
@@ -111,7 +112,7 @@ func (repo * Repository) UpdateManifestPaths(sha1 string) (bool, error) {
 	}
 
 	// TODO: Change terrible variable names or break this function up smaller
-	subpathManifests := make(map[string]string)
+	subpathManifests := make([]string, 0)
 	client := repo.client
 	treeShas := []string{sha1}
 	treeShasIndex := 0
@@ -150,7 +151,7 @@ func (repo * Repository) UpdateManifestPaths(sha1 string) (bool, error) {
 
 		fp := tn[treeSha] + name
 		if name == "ccmod.json"  {
-			subpathManifests[tn[treeSha]] = fp
+			subpathManifests = append(subpathManifests, fp)
 			continue
 		}
 
@@ -169,11 +170,7 @@ func (repo * Repository) UpdateManifestPaths(sha1 string) (bool, error) {
 		can := candidates[i]
 		con := confidences[i]
 		if con > 100 {
-			root := ""
-			if strings.Contains(can, "/") {
-				root = strings.Split(can, "/")[0]
-			}
-			subpathManifests[root] = can
+			subpathManifests = append(subpathManifests, can)
 		}
 	}
 
@@ -182,4 +179,29 @@ func (repo * Repository) UpdateManifestPaths(sha1 string) (bool, error) {
 	return true, nil
 }
 
+
+func (r * Repository) UpdateAllBranchesManifestPaths() bool {
+
+	branches,_, err := r.client.Repositories.ListBranches(context.TODO(), r.Owner, r.Name,nil)
+
+	if err != nil {
+		return false
+	}
+
+
+	updated := false
+
+	for _, branch := range branches {
+		bsha := branch.GetCommit().GetSHA()
+
+		u, err := r.UpdateManifestPaths(bsha)
+		if err != nil {
+			continue
+		}
+		if u {
+			updated = true
+		}
+	}
+	return updated
+}
 

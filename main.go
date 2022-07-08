@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"bytes"
 	"io"
+	"time"
 )
 
 var ctx context.Context = context.TODO()
@@ -49,31 +50,6 @@ func fromGithubBlobToRaw(blobUrl string) string {
 
 
 
-func updateRepoManifests(client * github.Client, repo * repository.Repository) bool {
-
-	branches,_, err := client.Repositories.ListBranches(ctx, repo.Owner, repo.Name,nil)
-
-	if err != nil {
-		return false
-	}
-
-
-	updated := false
-
-	for _, branch := range branches {
-		bsha := branch.GetCommit().GetSHA()
-
-		u, err := repo.UpdateManifestPaths(bsha)
-		if err != nil {
-			continue
-		}
-		if u {
-			updated = true
-		}
-	}
-	return updated
-
-}
 
 type RepositoryTrackEntry struct {
 	Owner string `json:"owner"`
@@ -150,41 +126,47 @@ func main() {
 	}
 
 
-
-	// Check if something updated what to track
-	repos = checkForTrackingUpdates(repos, client)
+	for {
 
 
-	update := false
+		// Check if something updated what to track
+		fmt.Println("Checking for tracking updates...")
 
-	for _, repo := range repos {
-		updated := updateRepoManifests(client, repo)
-		if updated {
-			update = true
+		repos = checkForTrackingUpdates(repos, client)
+		update := false
+
+		fmt.Println("Checking for repo updates...")
+		for _, repo := range repos {
+			updated := repo.UpdateAllBranchesManifestPaths()
+			if updated {
+				update = true
+			}
 		}
-	}
 
-	if update {
-		fmt.Println("Updating local copy...")
-		b, e := json.Marshal(repos)
-		if e != nil {
-			panic(e)
+		if update {
+			fmt.Println("Updating local copy...")
+			b, e := json.Marshal(repos)
+			if e != nil {
+				panic(e)
+			}
+		
+			f, e := os.Create("out.json")
+			if e != nil {
+				panic(e)
+			}
+			defer f.Close()
+		
+			reader := bytes.NewReader(b)
+		
+			_, e = io.Copy(f, reader)
+			if e != nil {
+				panic(e)
+			}
+		} else {
+			fmt.Println("Did not need to update local copy")
 		}
-	
-		f, e := os.Create("out.json")
-		if e != nil {
-			panic(e)
-		}
-		defer f.Close()
-	
-		reader := bytes.NewReader(b)
-	
-		_, e = io.Copy(f, reader)
-		if e != nil {
-			panic(e)
-		}
-	} else {
-		fmt.Println("Did not need to update local copy")
+		fmt.Println("Waiting 5 seconds...")
+		time.Sleep(5 * time.Second)
 	}
 
 }
