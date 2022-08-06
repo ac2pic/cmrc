@@ -54,6 +54,7 @@ func fromGithubBlobToRaw(blobUrl string) string {
 type RepositoryTrackEntry struct {
 	Owner string `json:"owner"`
 	Name string `json:"name"`
+	ExploreRecursively bool `json:"recursive,omitempty"`
 }
 
 func findRepo(repoList []*repository.Repository, owner string, name string) *repository.Repository {
@@ -82,7 +83,7 @@ func checkForTrackingUpdates(repoList []*repository.Repository, client * github.
 	for _, val := range track {
 		repo := findRepo(repoList, val.Owner, val.Name)
 		if repo == nil {
-			repo := repository.NewRepository(val.Owner, val.Name, client)
+			repo := repository.NewRepository(val.Owner, val.Name, val.ExploreRecursively,  client)
 			repoList = append(repoList, repo)
 		} 
 	}
@@ -111,9 +112,12 @@ func main() {
 
 	fh,e := os.ReadFile("out.json")
 
-
 	if e != nil {
-		panic(e)
+		if !strings.Contains(e.Error(), "no such file or directory") {
+			panic(e)
+		} else {
+			fh = []byte("[]")
+		}
 	}
 
 

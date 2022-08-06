@@ -76,8 +76,7 @@ func (repo * Repository) createCcmodGitManifest(props map[string]interface{}, pa
 	
 	version, ok := props["version"]; 
 	if !ok {
-		manifest.Version = "0.0.0"
-		return manifest, nil
+		return manifest, errors.New("createCcmodGitManifest: version not found")
 	}
 
 	strVersion, ok := version.(string);
@@ -105,8 +104,7 @@ func (repo * Repository) createNodeGitManifest(props map[string]interface{}, pat
 	
 	version, ok := props["version"]; 
 	if !ok {
-		manifest.Version = "0.0.0"
-		return manifest, nil
+		return manifest, errors.New("createNodeGitManifest: version not found")
 	}
 
 	strVersion, ok := version.(string);
@@ -130,7 +128,7 @@ func (repo * Repository) createGitManifest(sha1 string, fp string) (*GitManifest
 
 	data := make(map[string]interface{})
 	if err := json.Unmarshal([]byte(content), &data); err != nil {
-		return nil, errors.New(fmt.Sprintf("findManifest: %s/%s is not a valid json file", sha1, fp))
+		return &GitManifest{}, errors.New(fmt.Sprintf("findManifest: %s/%s is not a valid json file", sha1, fp))
 	}
 
 	if strings.HasSuffix(fp, "ccmod.json") {
@@ -161,14 +159,13 @@ func (repo * Repository) GetManifests(sha1 string) ([]*GitManifest, error) {
 		if err != nil {
 			return nil, err
 		}
-		
-		if treeShasIndex == 0 {
+
+		if repo.ExploreRecursively || treeShasIndex == 0 {
 			// add subtrees for exploration
 			for _, subtree := range findSubtrees(rt) {
 				subtreeSha := subtree.GetSHA()
 				treeShas = append(treeShas, subtreeSha)
-				tn[subtreeSha] = subtree.GetPath() + "/"
-				
+				tn[subtreeSha] = tn[treeSha] + subtree.GetPath() + "/"
 			}
 		}
 
@@ -233,95 +230,100 @@ func findManifestFilesInCommit(rc *github.RepositoryCommit, folder string) map[s
 	return manifests
 }
 
-func (r * Repository) checkManifestChanges(commitSha string, manifests []*GitManifest, updated[]bool, out chan <-*respGitManifestUpdate, doNotCheck bool) {
+func (r * Repository) checkManifestChanges(commitSha string, manifests []*GitManifest, updated[]bool, out chan <-*respGitManifestUpdate) {
+
 	rc, rr, err := r.client.Repositories.GetCommit(context.TODO(), r.Owner, r.Name, commitSha, nil)
 
 	if err != nil {
 		panic(err)
 	}
 
+	rg := &respGitManifestUpdate{commit: commitSha, parents:make([]string, 0), manifests: make([]*GitManifest, 0)}
+	rg.response = rr
 
-	rg := &respGitManifestUpdate{commit: commitSha, parents:make([]string, 0), response: rr, manifests: make([]*GitManifest, 0)}
-	if !doNotCheck {
-
-		for idx, manifest := range manifests {
-			folder := ""
-			pieces := strings.Split(manifest.Path, "/")
-			if len(pieces) == 2 {
-				folder = pieces[0] + "/"
-			}
-
-			cm := findManifestFilesInCommit(rc, folder)
-
-			upd := false
-
-			tfs := []string{folder + "ccmod.json", folder + "package.json"}
-
-
-			for _, tf := range tfs {
-				if val, ok := cm[tf]; ok {
-					status := val.GetStatus()
-					if status == "removed" {
-						// search 
-						continue
-					}
-
-					if status == "added" || status == "modified" {
-						nm, err := r.createGitManifest(commitSha, tf)
-						if err != nil {
-							fmt.Println(err)
-						} else {
-							if nm.Id != manifest.Id || nm.Path != manifest.Path || nm.Version != manifest.Version {
-								upd = true
-								rg.manifests = append(rg.manifests, nm)
-							}
-						}
-						break
-					}
-				} 
-			}
-
-
-			if upd {
-				rg.updated = append(rg.updated, upd)
-				continue
-			}
-
-			if !updated[idx] {
-				rg.updated = append(rg.updated, upd)
-				rg.manifests = append(rg.manifests, manifest)
-				continue
-			}
-
-			// If it fails for some reason
-			// Then it will fallback to the original one
-			var correct_manifest *GitManifest = nil
-
-			for _, tf := range tfs {
-				nm, err := r.createGitManifest(commitSha, tf)
-				if err != nil {
-					if strings.HasPrefix(err.Error(), "404") {
-						continue
-					} else if nm == nil {
-						panic(err)
-					}
-				}
-				rg.updated = append(rg.updated, true)
-
-				correct_manifest = nm
-				break
-			}
-
-			if correct_manifest != nil {
-				rg.manifests = append(rg.manifests, correct_manifest)
-			}
-		}
-
-	} else {
+	if updated == nil {
 		rg.manifests = manifests
-		for i := len(rg.manifests); i > 0; i-- {
-			rg.updated = append(rg.updated, false)
+
+		for i := len(manifests); i > 0; i-- {
+			rg.updated = append(rg.updated, true)
 		}
+
+		manifests = []*GitManifest{}
+	}
+
+	for idx, manifest := range manifests {
+		if manifest == nil {
+			continue
+		}
+
+		folder := ""
+		pieces := strings.Split(manifest.Path, "/")
+		if len(pieces) > 1 {
+			folder = strings.Join(pieces[0:len(pieces) - 1],"/") + "/"
+		}
+
+		cm := findManifestFilesInCommit(rc, folder)
+
+		upd := false
+
+		tfs := []string{folder + "ccmod.json", folder + "package.json"}
+
+
+		for _, tf := range tfs {
+			if val, ok := cm[tf]; ok {
+				status := val.GetStatus()
+				if status == "removed" {
+					// search 
+					continue
+				}
+
+				if status == "added" || status == "modified" {
+					nm, err := r.createGitManifest(commitSha, tf)
+					if err != nil {
+						fmt.Println(err)
+					} else {
+						if nm.Id != manifest.Id || nm.Path != manifest.Path || nm.Version != manifest.Version {
+							upd = true
+							rg.manifests = append(rg.manifests, nm)
+						}
+					}
+					break
+				}
+			} 
+		}
+
+		if upd {
+			rg.updated = append(rg.updated, upd)
+			continue
+		}
+
+		if !updated[idx] {
+			rg.updated = append(rg.updated, upd)
+			rg.manifests = append(rg.manifests, manifest)
+			continue
+		}
+
+
+		var correct_manifest *GitManifest = nil
+
+		for _, tf := range tfs {
+			nm, err := r.createGitManifest(commitSha, tf)
+			if err != nil {
+				if strings.HasPrefix(err.Error(), "404") {
+					continue
+				} else if nm == nil {
+					panic(err)
+				} else if nm.Id == "" || nm.Version == "" {
+					fmt.Println(err.Error())
+					continue
+				}
+			}
+			correct_manifest = nm
+			break
+		}
+
+		rg.manifests = append(rg.manifests, correct_manifest)
+		rg.updated = append(rg.updated, false)
 	}
 
 	for _, parent := range rc.Parents {
@@ -346,12 +348,13 @@ func (r * Repository) SearchCommitsForManifests(branch *github.Branch) bool {
 
 	out := make(chan *respGitManifestUpdate, 0)
 
-	go r.checkManifestChanges(rootCommit, manifests, nil, out, true)
+	go r.checkManifestChanges(rootCommit, manifests, nil, out)
 	waitOn := 1
 	updated := false
 	for data := range out {
 		waitOn -= 1
 		_, ok := r.GitManifestsByCommit[data.commit]
+		fmt.Println(data.commit, data.manifests)
 
 		if !ok {
 			updated = true
@@ -369,7 +372,7 @@ func (r * Repository) SearchCommitsForManifests(branch *github.Branch) bool {
 					prl = data.response.Rate.Limit - prl
 				}
 				waitOn += 1
-				go r.checkManifestChanges(commitSha, data.manifests, data.updated, out, false)
+				go r.checkManifestChanges(commitSha, data.manifests, data.updated, out)
 			}
 		}
 
