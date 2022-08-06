@@ -339,6 +339,10 @@ func (r * Repository) SearchCommitsForManifests(branch *github.Branch) bool {
 	rootCommit := branch.GetCommit().GetSHA()
 
 
+	if _, ok := r.GitManifestsByCommit[rootCommit]; ok {
+		return false
+	}
+
 	manifests, err := r.GetManifests(rootCommit)
 
 	if err != nil {
