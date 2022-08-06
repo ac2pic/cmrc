@@ -213,7 +213,6 @@ type respGitManifestUpdate struct {
 	manifests []*GitManifest
 	updated []bool
 	response *github.Response
-	changed bool
 }
 
 func findManifestFilesInCommit(rc *github.RepositoryCommit, folder string) map[string]*github.CommitFile {
@@ -238,7 +237,7 @@ func (r * Repository) checkManifestChanges(commitSha string, manifests []*GitMan
 		panic(err)
 	}
 
-	rg := &respGitManifestUpdate{commit: commitSha, parents:make([]string, 0), manifests: make([]*GitManifest, 0)}
+	rg := &respGitManifestUpdate{commit: commitSha, parents:make([]string, 0), manifests: make([]*GitManifest, 0), updated: make([]bool, 0)}
 	rg.response = rr
 
 	if updated == nil {
@@ -250,6 +249,7 @@ func (r * Repository) checkManifestChanges(commitSha string, manifests []*GitMan
 
 		manifests = []*GitManifest{}
 	}
+
 
 	for idx, manifest := range manifests {
 		if manifest == nil {
@@ -265,6 +265,7 @@ func (r * Repository) checkManifestChanges(commitSha string, manifests []*GitMan
 		cm := findManifestFilesInCommit(rc, folder)
 
 		upd := false
+		skip := false
 
 		tfs := []string{folder + "ccmod.json", folder + "package.json"}
 
@@ -273,18 +274,29 @@ func (r * Repository) checkManifestChanges(commitSha string, manifests []*GitMan
 			if val, ok := cm[tf]; ok {
 				status := val.GetStatus()
 				if status == "removed" {
-					// search 
 					continue
 				}
 
-				if status == "added" || status == "modified" {
+
+
+
+				if status == "added" || status == "modified" || status == "renamed" {
 					nm, err := r.createGitManifest(commitSha, tf)
+
 					if err != nil {
+
+						if nm != nil {
+							fmt.Println("Skipping", commitSha, nm, err)
+							skip = true
+						}
+
 						fmt.Println(err)
 					} else {
+						upd = true
 						if nm.Id != manifest.Id || nm.Path != manifest.Path || nm.Version != manifest.Version {
-							upd = true
 							rg.manifests = append(rg.manifests, nm)
+						} else {
+							rg.manifests = append(rg.manifests, manifest)
 						}
 					}
 					break
@@ -296,6 +308,11 @@ func (r * Repository) checkManifestChanges(commitSha string, manifests []*GitMan
 			rg.updated = append(rg.updated, upd)
 			continue
 		}
+
+		if skip {
+			continue
+		}
+
 
 		if !updated[idx] {
 			rg.updated = append(rg.updated, upd)
@@ -313,22 +330,27 @@ func (r * Repository) checkManifestChanges(commitSha string, manifests []*GitMan
 					continue
 				} else if nm == nil {
 					panic(err)
-				} else if nm.Id == "" || nm.Version == "" {
-					fmt.Println(err.Error())
-					continue
+				} else  {
+					break
 				}
 			}
 			correct_manifest = nm
 			break
 		}
 
-		rg.manifests = append(rg.manifests, correct_manifest)
-		rg.updated = append(rg.updated, false)
+		if correct_manifest != nil {
+			rg.manifests = append(rg.manifests, correct_manifest)
+			rg.updated = append(rg.updated, false)
+		}
+
 	}
+
 
 	for _, parent := range rc.Parents {
 		rg.parents = append(rg.parents, parent.GetSHA())
 	}
+
+
 
 	out <- rg
 }
@@ -358,7 +380,6 @@ func (r * Repository) SearchCommitsForManifests(branch *github.Branch) bool {
 	for data := range out {
 		waitOn -= 1
 		_, ok := r.GitManifestsByCommit[data.commit]
-		fmt.Println(data.commit, data.manifests)
 
 		if !ok {
 			updated = true
