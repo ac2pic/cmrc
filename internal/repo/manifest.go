@@ -265,7 +265,6 @@ func (r * Repository) checkManifestChanges(commitSha string, manifests []*GitMan
 		cm := findManifestFilesInCommit(rc, folder)
 
 		upd := false
-		skip := false
 
 		tfs := []string{folder + "ccmod.json", folder + "package.json"}
 
@@ -273,7 +272,9 @@ func (r * Repository) checkManifestChanges(commitSha string, manifests []*GitMan
 		for _, tf := range tfs {
 			if val, ok := cm[tf]; ok {
 				status := val.GetStatus()
+
 				if status == "removed" {
+					
 					continue
 				}
 
@@ -286,11 +287,14 @@ func (r * Repository) checkManifestChanges(commitSha string, manifests []*GitMan
 					if err != nil {
 
 						if nm != nil {
-							fmt.Println("Skipping", commitSha, nm, err)
-							skip = true
+							fmt.Println("commit", commitSha, err.Error())
+							fmt.Println("Preserving path only.")
+							upd = true
+							nm.Path = manifest.Path
+							rg.manifests = append(rg.manifests, nm)
+						} else {
+							fmt.Println(err)
 						}
-
-						fmt.Println(err)
 					} else {
 						upd = true
 						if nm.Id != manifest.Id || nm.Path != manifest.Path || nm.Version != manifest.Version {
@@ -304,18 +308,22 @@ func (r * Repository) checkManifestChanges(commitSha string, manifests []*GitMan
 			} 
 		}
 
+
 		if upd {
 			rg.updated = append(rg.updated, upd)
 			continue
 		}
 
-		if skip {
-			continue
-		}
-
-
 		if !updated[idx] {
-			rg.updated = append(rg.updated, upd)
+			// If it is not updated
+			// but it has multiple parents
+			// then it might not summarize its parent commits
+			if len(rc.Parents) > 1 {
+				rg.updated = append(rg.updated, true)
+
+			} else {
+				rg.updated = append(rg.updated, upd)
+			}
 			rg.manifests = append(rg.manifests, manifest)
 			continue
 		}
