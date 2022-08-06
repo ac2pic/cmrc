@@ -19,7 +19,6 @@ func (r * Repository) DownloadContent(branchOrSha1 string, path string) ([]byte,
 	}
 
 	if rsp.StatusCode != 200 {
-		fmt.Println(fullPath)
 		return []byte(""), errors.New(rsp.Status)
 	}
 

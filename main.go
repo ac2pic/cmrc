@@ -111,6 +111,7 @@ func main() {
 
 	fh,e := os.ReadFile("out.json")
 
+
 	if e != nil {
 		panic(e)
 	}
@@ -137,11 +138,20 @@ func main() {
 
 		fmt.Println("Checking for repo updates...")
 		for _, repo := range repos {
-			updated := repo.UpdateAllBranchesManifestPaths()
-			if updated {
-				update = true
+			branches, _, err := repo.GetBranches()
+			fmt.Println("Exploring... " + repo.Owner + "-" + repo.Name)
+			if err != nil {
+				fmt.Println("Skipping...")
+				continue
+			}
+
+			for _, branch := range branches {
+				if repo.SearchCommitsForManifests(branch) {
+					update = true
+				}
 			}
 		}
+
 
 		if update {
 			fmt.Println("Updating local copy...")
