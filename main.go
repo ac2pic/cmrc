@@ -13,7 +13,6 @@ import (
 	"encoding/json"
 	"bytes"
 	"io"
-	"time"
 )
 
 var ctx context.Context = context.TODO()
@@ -131,57 +130,57 @@ func main() {
 	}
 
 
-	for {
+	// Check if something updated what to track
+	fmt.Println("Checking for tracking updates...")
 
+	repos = checkForTrackingUpdates(repos, client)
+	update := false
 
-		// Check if something updated what to track
-		fmt.Println("Checking for tracking updates...")
+	fmt.Println("Checking for repo updates...")
+	for _, repo := range repos {
+		branches, _, err := repo.GetBranches()
+		repo_path := repo.Owner + "/" + repo.Name
+		if err != nil {
+			fmt.Println("Skipping... " + repo_path)
+			continue
+		}
 
-		repos = checkForTrackingUpdates(repos, client)
-		update := false
+		repo_updated := false
 
-		fmt.Println("Checking for repo updates...")
-		for _, repo := range repos {
-			branches, _, err := repo.GetBranches()
-			fmt.Println("Exploring... " + repo.Owner + "-" + repo.Name)
-			if err != nil {
-				fmt.Println("Skipping...")
-				continue
-			}
-
-			for _, branch := range branches {
-				if repo.SearchCommitsForManifests(branch) {
-					update = true
-				}
+		for _, branch := range branches {
+			if repo.SearchCommitsForManifests(branch) {
+				repo_updated = true
 			}
 		}
 
-
-		if update {
-			fmt.Println("Updating local copy...")
-			b, e := json.Marshal(repos)
-			if e != nil {
-				panic(e)
-			}
-		
-			f, e := os.Create("out.json")
-			if e != nil {
-				panic(e)
-			}
-			defer f.Close()
-		
-			reader := bytes.NewReader(b)
-		
-			_, e = io.Copy(f, reader)
-			if e != nil {
-				panic(e)
-			}
-		} else {
-			fmt.Println("Did not need to update local copy")
+		if repo_updated {
+			update = true
+			fmt.Println("Updated... " + repo_path)
 		}
-		fmt.Println("Waiting 5 seconds...")
-		time.Sleep(5 * time.Second)
 	}
 
+
+	if update {
+		fmt.Println("Updating local copy...")
+		b, e := json.Marshal(repos)
+		if e != nil {
+			panic(e)
+		}
+	
+		f, e := os.Create("out.json")
+		if e != nil {
+			panic(e)
+		}
+		defer f.Close()
+	
+		reader := bytes.NewReader(b)
+	
+		_, e = io.Copy(f, reader)
+		if e != nil {
+			panic(e)
+		}
+		os.Exit(0)
+	}
+	os.Exit(1)
 }
 

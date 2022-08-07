@@ -278,9 +278,6 @@ func (r * Repository) checkManifestChanges(commitSha string, manifests []*GitMan
 					continue
 				}
 
-
-
-
 				if status == "added" || status == "modified" || status == "renamed" {
 					nm, err := r.createGitManifest(commitSha, tf)
 
@@ -315,15 +312,7 @@ func (r * Repository) checkManifestChanges(commitSha string, manifests []*GitMan
 		}
 
 		if !updated[idx] {
-			// If it is not updated
-			// but it has multiple parents
-			// then it might not summarize its parent commits
-			if len(rc.Parents) > 1 {
-				rg.updated = append(rg.updated, true)
-
-			} else {
-				rg.updated = append(rg.updated, upd)
-			}
+			rg.updated = append(rg.updated, upd)
 			rg.manifests = append(rg.manifests, manifest)
 			continue
 		}
@@ -351,8 +340,19 @@ func (r * Repository) checkManifestChanges(commitSha string, manifests []*GitMan
 			rg.updated = append(rg.updated, false)
 		}
 
+
 	}
 
+
+	// Whether the manifest file was updated or not
+	// a commit with multiple parents
+	// needs to have the parents check their own
+	// snapshot to see if they even have a manifest themselves
+	if len(rc.Parents) > 1 {
+		for idx := range rg.manifests {
+			rg.updated[idx] = true
+		}
+	}
 
 	for _, parent := range rc.Parents {
 		rg.parents = append(rg.parents, parent.GetSHA())
