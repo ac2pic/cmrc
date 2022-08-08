@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"bytes"
 	"io"
+	"time"
 )
 
 var ctx context.Context = context.TODO()
@@ -52,13 +53,14 @@ func fromGithubBlobToRaw(blobUrl string) string {
 
 type RepositoryTrackEntry struct {
 	Owner string `json:"owner"`
-	Name string `json:"name"`
+	Name string `json:"repo"`
+	Id string `json:"id"`
 	ExploreRecursively bool `json:"recursive,omitempty"`
 }
 
-func findRepo(repoList []*repository.Repository, owner string, name string) *repository.Repository {
+func findRepo(repoList []*repository.Repository, owner string, name string, id string) *repository.Repository {
 	for _, repo := range repoList {
-		if repo.Owner == owner && repo.Name == name {
+		if (repo.Owner == owner && repo.Name == name) || (id != "" && repo.Id == id) {
 			return repo
 		}
 	}
@@ -80,13 +82,31 @@ func checkForTrackingUpdates(repoList []*repository.Repository, client * github.
 	// check for new entries
 
 	for _, val := range track {
-		repo := findRepo(repoList, val.Owner, val.Name)
+		repo := findRepo(repoList, val.Owner, val.Name, val.Id)
 		if repo == nil {
-			repo := repository.NewRepository(val.Owner, val.Name, val.ExploreRecursively,  client)
-			repoList = append(repoList, repo)
-		} 
+			new_repo := repository.NewRepository(val.Owner, val.Name, val.Id, val.ExploreRecursively, client)
+			repoList = append(repoList, new_repo)
+		} else {
+			repo.Owner = val.Owner
+			repo.Name = val.Name
+			repo.Id = val.Id
+			repo.ExploreRecursively = val.ExploreRecursively
+		}
 	}
 	return repoList
+}
+
+func checkErrorPanicOrWait(rr *github.Response, err error) {
+	if (rr.Rate.Remaining > 0) {
+		panic(err)
+	}
+
+	waitTime := rr.Rate.Reset.Sub(time.Now())
+
+	if (waitTime > time.Second * 0) {
+		fmt.Println("Rate limit hit. Will be waiting", waitTime)
+		time.Sleep(waitTime)
+	}
 }
 
 func main() {
@@ -138,20 +158,47 @@ func main() {
 
 	fmt.Println("Checking for repo updates...")
 	for _, repo := range repos {
-		branches, _, err := repo.GetBranches()
+		var branches []*github.Branch = nil
 		repo_path := repo.Owner + "/" + repo.Name
-		if err != nil {
-			fmt.Println("Skipping... " + repo_path)
-			continue
+		fmt.Println("Checking...", repo_path)
+		for branches == nil {
+			b, resp, err := repo.GetBranches()
+			if err != nil {
+				checkErrorPanicOrWait(resp, err)
+				continue
+			}
+			branches = b
 		}
+
 
 		repo_updated := false
 
+		branchCommits := make(map[string]string)
+
+
+		// Length needs to match
+		// for them to be the same
+		if len(branches) != len(repo.BranchCommits) {
+			repo_updated = true
+		}
+
 		for _, branch := range branches {
-			if repo.SearchCommitsForManifests(branch) {
+			branchCommit := branch.GetCommit().GetSHA()
+			branchName := branch.GetName()
+			branchCommits[branchName] = branchCommit
+			// all branchNames must have the same commit
+			// to be the same
+			if repo.BranchCommits[branchName] != branchCommit {
+				repo_updated = true
+			}
+
+			if repo.SearchCommitsForManifests(branchCommit) {
 				repo_updated = true
 			}
 		}
+
+		repo.BranchCommits = branchCommits
+
 
 		if repo_updated {
 			update = true

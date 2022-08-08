@@ -147,17 +147,14 @@ func (repo * Repository) GetManifests(sha1 string) ([]*GitManifest, error) {
 
 	for treeShasIndex := 0;treeShasIndex < len(treeShas);  {
 		treeSha := treeShas[treeShasIndex]
-		rt, rr, err := repo.client.Git.GetTree(context.TODO(), repo.Owner, repo.Name, treeSha, false)
-
-		// Likely needs to be moved
-		// As other code will use it
-		if rr.Rate.Remaining == 0 {
-			restTime := rr.Rate.Reset.Time.Sub(time.Now());
-			time.Sleep(restTime)
-		}
-
-		if err != nil {
-			return nil, err
+		var rt *github.Tree = nil
+		for rt == nil {
+			tree, resp, err := repo.client.Git.GetTree(context.TODO(), repo.Owner, repo.Name, treeSha, false)
+			if err != nil {
+				checkErrorPanicOrWait(resp, err)
+				continue
+			}
+			rt = tree
 		}
 
 		if repo.ExploreRecursively || treeShasIndex == 0 {
@@ -229,13 +226,35 @@ func findManifestFilesInCommit(rc *github.RepositoryCommit, folder string) map[s
 	return manifests
 }
 
-func (r * Repository) checkManifestChanges(commitSha string, manifests []*GitManifest, updated[]bool, out chan <-*respGitManifestUpdate) {
-
-	rc, rr, err := r.client.Repositories.GetCommit(context.TODO(), r.Owner, r.Name, commitSha, nil)
-
-	if err != nil {
+func checkErrorPanicOrWait(rr *github.Response, err error) {
+	if (rr.Rate.Remaining > 0) {
 		panic(err)
 	}
+
+	waitOn := rr.Rate.Reset.Sub(time.Now())
+
+	if (waitOn > time.Second * 0) {
+		time.Sleep(waitOn)
+	}
+}
+
+func (r * Repository) checkManifestChanges(commitSha string, manifests []*GitManifest, updated[]bool, out chan <-*respGitManifestUpdate) {
+
+
+	var rc *github.RepositoryCommit = nil
+	var rr *github.Response = nil
+
+	for rc == nil && rr == nil {
+		repoCommit, resp, err := r.client.Repositories.GetCommit(context.TODO(), r.Owner, r.Name, commitSha, nil)
+
+		if err != nil {
+			checkErrorPanicOrWait(resp, err)
+			continue
+		}
+		rc = repoCommit
+		rr = resp
+	}
+
 
 	rg := &respGitManifestUpdate{commit: commitSha, parents:make([]string, 0), manifests: make([]*GitManifest, 0), updated: make([]bool, 0)}
 	rg.response = rr
@@ -364,10 +383,7 @@ func (r * Repository) checkManifestChanges(commitSha string, manifests []*GitMan
 }
 
 
-func (r * Repository) SearchCommitsForManifests(branch *github.Branch) bool {
-
-	rootCommit := branch.GetCommit().GetSHA()
-
+func (r * Repository) SearchCommitsForManifests(rootCommit string) bool {
 
 	if _, ok := r.GitManifestsByCommit[rootCommit]; ok {
 		return false
@@ -397,10 +413,12 @@ func (r * Repository) SearchCommitsForManifests(branch *github.Branch) bool {
 			for _, commitSha := range data.parents {
 				prl -= 1
 				if prl < 0 {
-					fmt.Println("Rate limit hit")
-					fmt.Println(time.Now())
 					resetTime := rate.Reset.Sub(time.Now())
-					fmt.Println("Will reset in", resetTime)
+					if resetTime > time.Second * 0 {
+						fmt.Println("Rate limit hit")
+						fmt.Println(time.Now())
+						fmt.Println("Will reset in", resetTime)
+					}
 					time.Sleep(resetTime)
 					prl = data.response.Rate.Limit - prl
 				}
